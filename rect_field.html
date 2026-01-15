@@ -1,0 +1,233 @@
+<html>
+<head>
+    <title>My Web Page</title>  
+    <style>
+     html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+canvas {
+    display: block;      /* removes inline-canvas whitespace */
+    width: 100vw;
+    height: 100vh;
+}
+    </style>
+</head>
+<body>
+    <canvas id="myCanvas" width="1200" height="800" style="border:1px solid #000000;"></canvas>
+     <script defer>
+
+
+const canvas = document.getElementById("myCanvas");
+const gl = canvas.getContext("webgl2");
+if (!gl) throw new Error("WebGL2 required");
+
+// ================== SHADERS ==================
+const vsSource = `#version 300 es
+precision mediump float;
+
+in vec2 a_position;
+
+out vec2 v_local;
+out float pos_y;
+out float v_instance;
+
+uniform float u_time;
+uniform vec2 u_resolution;
+
+uniform mat3 u_model;
+
+void main() {
+    int instance = gl_InstanceID;
+    int row = instance / 20;
+    int col = instance % 20;
+    v_instance = float(instance) / 20.0;
+
+    vec3 pos = u_model * vec3(a_position.xy,1.0);
+    v_local = a_position;
+
+    // float p_size = sin(u_time*0.33)*5.0 + 10.0;
+    float p_size = 10.0;
+    vec2 size = vec2(p_size,p_size)/u_resolution;
+    vec2 offset = vec2(u_resolution.x*0.5- p_size*20.0,u_resolution.y*0.5 - p_size*20.0)/u_resolution;
+    vec2 zeroToOne = pos.xy * size + vec2(float(col) * size.x * 2.0, float(row) * size.y * 2.0) + offset;
+
+    // zeroToOne = zeroToOne + vec2(zeroToOne.x * zeroToOne.x, zeroToOne.y * zeroToOne.y) * sin(u_time);
+    /*
+    float y = zeroToOne.y;
+    zeroToOne.y = sin(zeroToOne.x * 10.0 + u_time) * 0.05 + zeroToOne.y;
+    zeroToOne.x = sin(y * 10.0 + u_time) * 0.05 + zeroToOne.x;
+    */
+
+    vec2 zeroToTwo = zeroToOne * 2.0;
+    // convert to -1..+1
+    vec2 clipSpace = zeroToTwo - 1.0;
+
+    // CRT curvature
+    float r2 = dot(clipSpace, clipSpace);
+    float k = 0.4;           // curvature strength
+    clipSpace *= 1.0 - k * r2;
+
+    pos_y = clipSpace.y;
+
+    gl_Position = vec4(clipSpace, 0.0, 1.0);
+}
+`;
+
+const fsSource = `#version 300 es
+precision mediump float;
+
+in vec2 v_local;
+in float pos_y;
+in float v_instance;
+
+uniform float u_time;
+
+out vec4 outColor;
+
+void main() {
+    float row = floor(v_instance)/20.0;
+    float col = fract(v_instance);    
+
+    float check = mod(pos_y * 1000.0 , 4.0);
+    // step, smoothstep, fract
+    float has_color = step(1.0, check);
+
+    float gradient = sin(col + row + u_time * 10.0) * 0.1 + 0.8;
+    // has_color = has_color * step(0.05,fract(col+u_time));
+
+    outColor = vec4(v_local.x * has_color * gradient, v_local.y * has_color * gradient, 0.6 * gradient * has_color, 1.0); // gray
+}
+`;
+
+// ================== UTILS ==================
+function createShader(gl, type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(s));
+    }
+    return s;
+}
+
+function createProgram(gl, vs, fs) {
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(p));
+    }
+    return p;
+}
+
+function rotateAround(cx, cy, angle) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+
+    return new Float32Array([
+        // column 0
+         c,  s, 0,
+        // column 1
+        -s,  c, 0,
+        // column 2 (translation)
+        cx - cx * c + cy * s,
+        cy - cx * s - cy * c,
+        1
+    ]);
+}
+
+// ================== PROGRAM ==================
+const program = createProgram(
+    gl,
+    createShader(gl, gl.VERTEX_SHADER, vsSource),
+    createShader(gl, gl.FRAGMENT_SHADER, fsSource)
+);
+gl.useProgram(program);
+
+// ================== GEOMETRY ==================
+const quadVertices = new Float32Array([
+    0, 0,
+    1, 0,
+    0, 1,
+    0, 1,
+    1, 0,
+    1, 1
+]);
+
+const quadBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+
+// ================== INSTANCE DATA ==================
+const maxRects = 400;
+
+// ================== VAO ==================
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// position
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+const aPosLoc = gl.getAttribLocation(program, "a_position");
+gl.enableVertexAttribArray(aPosLoc);
+gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 0, 0);
+
+gl.bindVertexArray(null);
+
+// ================== UNIFORMS ==================
+const uResLoc = gl.getUniformLocation(program, "u_resolution");
+gl.uniform2f(uResLoc, canvas.width, canvas.height);
+
+const u_timeLoc = gl.getUniformLocation(program, "u_time");
+
+const u_modelLoc = gl.getUniformLocation(program, "u_model");
+
+// ================== RENDER ==================
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+gl.uniformMatrix3fv(u_modelLoc, false, rotateAround(0.5, 0.5, 0.0));
+
+function render(time) {
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(program);
+    gl.bindVertexArray(vao);
+    gl.uniform1f(u_timeLoc, time * 0.001);
+    //const u_matrix = rotateAround(0.5, 0.5, time * 0.001);
+    //gl.uniformMatrix3fv(u_modelLoc, false, u_matrix);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, maxRects);
+
+    /*
+    const u_matrix_zero = rotateAround(0.0, 0.0, 0.0);
+    gl.uniformMatrix3fv(u_modelLoc, false, u_matrix_zero);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, maxRects);
+    */
+
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+
+const m45 = rotateAround(0.5,0.5, Math.PI/4);
+console.log(m45);
+
+function mat_mul(m, v) {
+    return [
+        m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+        m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+        m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+    ];
+}
+const res = mat_mul(m45, [0.0,0.0,1.0]);
+console.log(res);
+
+    </script>
+</body>
+</html>

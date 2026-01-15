@@ -1,0 +1,169 @@
+<html>
+<head>
+    <title>My Web Page</title>  
+</head>
+<body>
+    <h1>WebGL</h1>
+    <canvas id="myCanvas" width="1200" height="800" style="border:1px solid #000000;"></canvas>
+     <script defer>
+const canvas = document.getElementById("myCanvas");
+const gl = canvas.getContext("webgl2");
+if (!gl) throw new Error("WebGL2 required");
+
+// ----- Shaders -----
+const vsSource = `#version 300 es
+in vec2 a_position;      // unit quad (0..1)
+in vec2 a_offset;        // per-instance position in pixels
+in vec2 a_size;          // per-instance size in pixels
+
+uniform vec2 u_resolution;
+
+void main() {
+    // scale + translate
+    vec2 pos = a_position * a_size + a_offset;
+
+    // convert to clip space
+    vec2 zeroToOne = pos / u_resolution;
+    vec2 clip = zeroToOne * 2.0 - 1.0;
+    gl_Position = vec4(clip * vec2(1,-1), 0.0, 1.0);
+}
+`;
+
+const fsSource = `#version 300 es
+precision mediump float;
+out vec4 outColor;
+void main() {
+    outColor = vec4(0.6, 0.6, 0.6, 1.0); // gray
+}
+`;
+
+// ----- Compile & link -----
+function createShader(gl, type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+        throw new Error(gl.getShaderInfoLog(s));
+    }
+    return s;
+}
+
+function createProgram(gl, vs, fs){
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p, gl.LINK_STATUS)){
+        throw new Error(gl.getProgramInfoLog(p));
+    }
+    return p;
+}
+
+const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+const program = createProgram(gl, vs, fs);
+gl.useProgram(program);
+
+// ----- Quad vertex buffer (unit rect) -----
+const quadVertices = new Float32Array([
+  0,0,
+  1,0,
+  0,1,
+  0,1,
+  1,0,
+  1,1
+]);
+const quadBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+
+// ----- Per-instance buffers -----
+const maxRects = 1000;
+let instancePositions = new Float32Array(maxRects*2);
+let instanceSizes = new Float32Array(maxRects*2);
+let velocities = new Float32Array(maxRects*2);
+
+const offsetBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, instancePositions, gl.DYNAMIC_DRAW);
+
+const sizeBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, instanceSizes, gl.DYNAMIC_DRAW);
+
+// ----- VAO -----
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// quad vertices
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+const aPosLoc = gl.getAttribLocation(program, "a_position");
+gl.enableVertexAttribArray(aPosLoc);
+gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 0,0);
+
+// instance offset
+gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuffer);
+const aOffsetLoc = gl.getAttribLocation(program, "a_offset");
+gl.enableVertexAttribArray(aOffsetLoc);
+gl.vertexAttribPointer(aOffsetLoc, 2, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(aOffsetLoc, 1); // per-instance
+
+// instance size
+gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+const aSizeLoc = gl.getAttribLocation(program, "a_size");
+gl.enableVertexAttribArray(aSizeLoc);
+gl.vertexAttribPointer(aSizeLoc, 2, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(aSizeLoc, 1); // per-instance
+
+// uniform
+const uResLoc = gl.getUniformLocation(program, "u_resolution");
+gl.uniform2f(uResLoc, canvas.width, canvas.height);
+
+// ----- Initialize some rectangles -----
+const numRects = maxRects;
+for(let i=0;i<numRects;i++){
+    instancePositions[i*2] = Math.random()*(canvas.width-50);
+    instancePositions[i*2+1] = Math.random()*(canvas.height-50);
+    instanceSizes[i*2] = 2 + Math.random()*5.0;
+    instanceSizes[i*2+1] = 2 + Math.random()*5.0;
+    velocities[i*2] = (Math.random()-0.5)*3;
+    velocities[i*2+1] = (Math.random()-0.5)*3;
+}
+
+// upload once
+gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuffer);
+gl.bufferSubData(gl.ARRAY_BUFFER, 0, instancePositions);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceSizes);
+
+// ----- Render loop -----
+function render(time){
+    gl.clearColor(0,0,0,1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Example: move rectangles randomly
+    for(let i=0;i<numRects;i++){
+        instancePositions[i*2] += velocities[i*2];
+        instancePositions[i*2+1] += velocities[i*2+1];
+        if (instancePositions[i*2] < 0 || instancePositions[i*2] > canvas.width - instanceSizes[i*2]) {
+            velocities[i*2] = -velocities[i*2];
+        }
+        if (instancePositions[i*2+1] < 0 || instancePositions[i*2+1] > canvas.height - instanceSizes[i*2+1]) {
+            velocities[i*2+1] = -velocities[i*2+1];
+        }
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, offsetBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, instancePositions);
+
+    gl.bindVertexArray(vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, numRects);
+
+    requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+Was will ich ausprobieren
+2d - rendering
+
+* multiple instances
+* draw circles or rounded corners using shaders
+* try framebuffers
+* mache zoom und translation
+* zeige graphen (aus nodes und edges)
+* ein super einfaches spiel (z.B asteroid)
+* 
+
+####
+fonts
+
+https://snowb.org/
+
+#####
+Screibe eine Klassische Demo
+- farben verlauf
+- Laufschrift mit Farbeffekten
+- 
+
+
+
